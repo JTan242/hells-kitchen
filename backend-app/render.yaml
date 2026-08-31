@@ -1,0 +1,16 @@
+# Render blueprint for the API. Point Render at this repo and it reads this file.
+# Root Directory must be set to `backend-app` in the Render dashboard.
+services:
+  - type: web
+    name: recipe-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # The deployed frontend origin. Without it CORS stays open to any origin.
+      - key: ALLOWED_ORIGIN
+        sync: false

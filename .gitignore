@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+out/
+build/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Environment files — the .example templates are committed, real ones are not
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Deployment
+.vercel
