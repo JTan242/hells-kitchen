@@ -86,114 +86,163 @@ Good luck! We're excited to see your implementation.
 
 ## Candidate Notes
 
-### Setup
+### Live demo
 
-Folders are `backend-app/` and `frontend-app/` (the names in the original
-instructions were `backend/` and `frontend/`).
+| | |
+|---|---|
+| **App** | https://hells-kitchen-ten.vercel.app |
+| **API** | https://recipe-api-izfc.onrender.com |
+
+The API is on Render's free tier and sleeps after ~15 minutes idle, so the first
+page load takes about 13 seconds while it wakes. Everything after that is ~0.2s.
+
+Folders are `backend-app/` and `frontend-app/`. Node 20+.
+`npm test` runs 49 backend and 16 frontend tests.
+
+### Design decisions
+
+**The gaps in the ingredient data drive the design.** Eight referenced ingredient
+ids have no row, so the obvious join throws on four of the fifteen recipes. Rather
+than hide that:
+
+- Unresolved ingredients still render, marked, and are left out of totals rather
+  than counted as zero.
+- Affected recipes show `≥ 158 kcal*`. Without the marker, sorting by calories put
+  Chocolate Chip Cookies among the lightest recipes, since butter and both sugars
+  are missing.
+- **The allergen filter withholds them.** Chicken Stir-Fry declares no allergens but
+  contains soy sauce, so excluding gluten showed it as safe. Everywhere else a gap
+  costs accuracy; here it could cost a reaction, so this is the one place the app
+  declines to answer rather than answering approximately. The list reports how many
+  it withheld.
+- Dietary claims are derived only when every ingredient resolves; otherwise the
+  recipe's own tags stand, so a gap can never invent a "vegan" label.
+
+**Each layer hides the one below, so each file has a single reason to change.**
 
 ```
-cd backend-app && npm install && npm run dev    # Express API on :8080
-cd frontend-app && npm install && npm run dev   # Next.js UI on :3000
+types.ts       shapes only, no runtime code
+db.ts          the only file that touches the data source
+nutrition.ts   pure maths — no I/O, no HTTP, trivially testable
+recipes.ts     composes db + nutrition into answers
+routes.ts      the untrusted boundary; nothing deeper sees raw input
+server.ts      transport, CORS, error envelopes
 ```
 
-No extra services or env files are required. The frontend defaults to
-`http://localhost:8080`; override with `NEXT_PUBLIC_API_URL` if you move the API.
+Swapping `data.json` for a real datastore is confined to `db.ts`. Better unit
+conversions are confined to `nutrition.ts`. A new filter is `recipes.ts` plus one
+line in `routes.ts`. Auth would be `server.ts`.
 
-Both apps are TypeScript in `strict` mode.
+The frontend mirrors it: `app/` routes and fetches, `components/` render from props
+and never fetch, `lib/` holds logic with no JSX. **The URL is the seam** — `Filters`
+only writes it, pages only read it, and the two never import each other. A new
+filter therefore touches one component and one backend file, with nothing in
+between.
+
+**The server owns filtering, sorting and validation.** The client never holds the
+dataset, so the API shape still holds as the data grows. Validation returns every
+failing field at once rather than the first — a second copy of the rules in the
+browser would drift, and is bypassable anyway.
+
+### Beyond the core requirements
+
+**From the suggested bonus list**
+
+| Feature | Notes |
+|---|---|
+| Dietary restriction filters | derived from ingredients, not hardcoded |
+| Calorie calculator by serving size | follows the scaler live, computed in the browser |
+| Recipe scaling | volumes rescale as fractions (`1/2` → `5/8`), weights as decimals |
+| Sorting | six fields, each ascending or descending |
+| Types | both apps `strict`; the backend adds `noUncheckedIndexedAccess` |
+
+**Added beyond it**
+
+| Feature | Notes |
+|---|---|
+| Allergen exclusion | with the withholding behaviour above |
+| Exact ingredient picker | AND across selections — "chicken *and* ginger" |
+| Max total time filter | |
+| Add-recipe form | `POST /api/recipes` with server-side validation |
+| `GET /api/facets` | filter options derived from the data, so no option matches nothing |
+| Shareable filtered views | filter state lives in the URL |
+| Error handling | real 404s, a distinct screen for an unreachable API, JSON error envelope throughout |
+| 65 unit tests | 49 backend, 16 frontend |
+| Deployed | Vercel + Render, CORS locked to the frontend origin |
+
+Not attempted: favouriting, shopping lists, and an LLM feature.
+
+### File structure
 
 ```
-cd backend-app  && npm run typecheck && npm test    # 49 tests
-cd frontend-app && npm run typecheck && npm run lint && npm run build
+backend-app/src/
+server.ts      boot, CORS, 404/500 nets
+  ├─ routes.ts        URL/body → trusted values, JSON out
+  │    ├─ validation.ts    POST body → NewRecipeInput | field errors
+  │    └─ recipes.ts       join, derive, filter, sort          ← the logic
+  │         ├─ nutrition.ts    amount + unit → grams → kcal   (pure)
+  │         └─ db.ts           data.json → in-memory Store
+  └─ db.ts            also imported directly, to load() before listen()
+
+types.ts       shapes only, zero runtime code — imported by everything
 ```
 
-Copy `.env.example` to `.env` in either app to override defaults. Neither is
-required locally.
+```
+frontend-app/                       [client] = ships JS; the rest render server-side
+app/layout.tsx            header + page frame, wraps every route
+app/page.tsx              /             redirect to /recipes
 
-### Implementation choices
+app/recipes/page.tsx      /recipes      reads the URL's filters, renders the grid
+  ├─ lib/api.ts                fetchRecipes + fetchFacets, concurrently
+  ├─ components/Filters.tsx    [client] writes filter state back to the URL
+  ├─ components/RecipeCard.tsx one card; flags incomplete calorie figures
+  └─ components/ErrorBox.tsx   shown when the API is unreachable
 
-- **Both apps converted to TypeScript.** The scaffold shipped as plain JS; the
-  brief lists types as a bonus and TS best practice as a criterion.
-- **Filtering, sorting and nutrition run on the server.** The client never holds
-  the full dataset, so the same API shape works at 15 recipes or 15,000.
-- **Filter state lives in the URL.** Results render server-side on first paint
-  and a filtered view is a shareable link. Filter changes use `router.replace`,
-  so they do not each become a history entry.
-- **Serving scaling is client-side maths.** Instant, and a round trip per tap
-  would be no more correct.
-- **No UI or state library.** Plain CSS custom properties and React state; the
-  app is not large enough for either to pay for itself.
+app/recipes/[id]/page.tsx  /recipes/:id
+  ├─ lib/api.ts                fetchRecipe; a 404 and a dead API differ
+  ├─ components/ServingScaler.tsx  [client] servings → quantities + nutrition
+  │    └─ lib/format.ts             scaling, fraction rendering        (pure)
+  └─ components/ErrorBox.tsx
 
-A full walkthrough of the architecture and every trade-off is in
-[Review.md](./Review.md).
+app/recipes/new/page.tsx   /recipes/new
+  ├─ lib/api.ts                fetchFacets for the dropdown options
+  └─ components/RecipeForm.tsx [client] POSTs, renders per-field errors
+       └─ lib/api.ts               createRecipe → 201 | 400 + fields
 
-### Completed features
-
-Core: recipe list, detail page (ingredients, instructions, tags, calculated
-nutrition), and search/filter by name, tag and ingredient.
-
-Bonus: dietary filters, allergen exclusion, an exact ingredient picker, recipe
-scaling by serving size, a calorie calculator that follows the scaler, sorting
-(name / prep time / total time / difficulty / calories / date added), a
-max-cook-time filter, an add-recipe form with server-side validation, and derived
-filter options served from the data rather than hardcoded. Backend logic is
-covered by 49 unit tests.
+app/error.tsx / not-found.tsx    unhandled throws / unknown URLs
+lib/types.ts   the API contract, mirrored from the backend by hand
+```
 
 ### Assumptions
 
-- **Ingredient nutrition is per 100 g.** `data.json` does not say so, but the
-  numbers match standard per-100 g references (chicken breast 165 kcal, ground
-  beef 250 kcal, mozzarella 280 kcal).
-- **Volume and count units convert to grams via a fixed table.** One number per
-  unit, not per ingredient, so a cup of flour and a cup of milk are treated as
-  the same weight. Totals are therefore estimates and the UI labels them as such.
-- **A recipe's own dietary tags are authoritative.** Tags are derived from
-  ingredients only when every ingredient resolves; otherwise the author's tags
-  are used unchanged, so an incomplete list can never invent a "vegan" claim.
+1. **Nutrition is per 100 g.** Not stated in the data, but the values match standard
+   per-100 g references (chicken breast 165, ground beef 250).
+2. **Units convert to grams by a fixed table** — one figure per unit, not per
+   ingredient, so a cup of flour and a cup of milk weigh the same. Totals are
+   therefore estimates, and the UI labels them as such.
 
 ### Known limitations
 
-- **8 of the ingredient ids referenced by recipes have no row in the ingredients
-  table** (`basil`, `broccoli`, `brown_sugar`, `butter`, `carrot`, `ginger`,
-  `soy_sauce`, `white_sugar`). Four recipes are affected, one of them badly:
-  Chicken Stir-Fry can only account for 1 of its 5 ingredients.
-
-  This is a data gap rather than a bug, but it is not hidden. Affected recipes
-  show their calories as `≥ 158 kcal*` rather than a bare figure, missing
-  ingredients are listed with a "no nutrition data" badge, and **the allergen
-  filter withholds them entirely** — a recipe that cannot account for all its
-  ingredients must not be presented as free of an allergen. The list says how
-  many were withheld and why.
-- **Unit conversion is approximate** (see assumptions) — expect calorie figures
-  to be directionally right rather than exact.
-- **Frontend has no tests.** The backend's pure logic is covered; `lib/format.ts`
-  (quantity scaling and fraction rendering) is not.
-- **No pagination.** Fine for 15 recipes; the list endpoint already returns an
-  envelope with room for it.
-- **Added recipes live in memory only.** `POST /api/recipes` appends to the
-  in-memory store and never writes to `data.json` — the file is a fixture, and on
-  a free-tier host the filesystem is ephemeral, so a write would silently vanish
-  on restart. The form says this plainly rather than implying persistence.
-- **No edit or delete.** Create is the only write; full CRUD on a fixture would
-  be scope without much to show for it.
-- **New recipes can only use existing ingredients.** The form picks from the 46
-  in the table, so nutrition always resolves. Inventing an ingredient would mean
-  a second write path for the ingredients table.
-
-### Deployment
-
-`frontend-app/vercel.json` and `backend-app/render.yaml` are included.
-
-1. **API → Render**: new Blueprint from this repo, Root Directory `backend-app`.
-   Once it is live, set `ALLOWED_ORIGIN` to the frontend URL to close CORS.
-2. **UI → Vercel**: import the repo, Root Directory `frontend-app`, set
-   `NEXT_PUBLIC_API_URL` to the Render URL.
-
-Node 20 is pinned via `.nvmrc` and an `engines` field in both apps.
+- **Calorie figures are approximate**, per assumption 2. Directionally right.
+- **Added recipes live in memory only.** `POST` never writes `data.json` — a
+  free-tier filesystem is ephemeral, so a write would look like persistence until
+  it silently vanished. The form says so.
+- **No edit or delete**, and new recipes can only reference existing ingredients.
+- **No pagination.** The list endpoint already returns `{ recipes, total, withheld }`
+  with room for it.
+- **Awkward fractions round.** Scaling snaps to common kitchen fractions, so 5/12
+  cup falls back to `0.42 cup`.
+- **Frontend tests cover `lib/format.ts` only**; components and pages are untested.
 
 ### With more time
 
-A shared types package so the frontend and backend contract cannot drift,
-`gramsPerUnit` on each ingredient row to replace the conversion table, tests for
-`lib/format.ts`, real persistence behind `db.ts` so added recipes survive a
-restart, pagination on the list endpoint, and a shopping-list generator across
-selected recipes.
+- **An LLM to classify ingredients.** The root problem is that eight ingredients
+  carry no dietary or allergen data. Inferring those tags from the ingredient name
+  at import time — soy sauce as soy/gluten/wheat, butter as non-vegan — would close
+  the allergen gap properly, instead of the app having to withhold recipes it
+  cannot vouch for.
+- **`gramsPerUnit` per ingredient**, replacing the fixed conversion table. The
+  single biggest accuracy win available.
+- **A shared types package**, so the frontend and backend contract cannot drift.
+- **Real persistence** behind `db.ts`.
+- Pagination, component tests, and a shopping-list generator.

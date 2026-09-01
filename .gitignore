@@ -32,3 +32,6 @@ Thumbs.db
 
 # Deployment
 .vercel
+
+# Personal working notes, not part of the submission
+notes/
