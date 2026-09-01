@@ -1,25 +1,13 @@
 import Link from 'next/link';
 
-/**
- * One place to render a failure. The API layer already turns transport errors
- * into a human sentence ("is the backend running?"), so this just presents it
- * and always offers a way out of the dead end.
- */
-export function ErrorBox({
-  title,
-  message,
-  backHref = '/recipes',
-}: {
-  title: string;
-  message: string;
-  backHref?: string;
-}) {
+/** Renders a failure with a way out. Messages are composed in lib/api.ts. */
+export function ErrorBox({ title, message }: { title: string; message: string }) {
   return (
     <div className="error-box">
       <h2>{title}</h2>
       <p>{message}</p>
       <p className="note">
-        <Link href={backHref}>← Back to all recipes</Link>
+        <Link href="/recipes">← Back to all recipes</Link>
       </p>
     </div>
   );

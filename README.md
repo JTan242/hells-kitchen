@@ -115,9 +115,9 @@ required locally.
   brief lists types as a bonus and TS best practice as a criterion.
 - **Filtering, sorting and nutrition run on the server.** The client never holds
   the full dataset, so the same API shape works at 15 recipes or 15,000.
-- **Filter state lives in the URL.** Results render server-side on first paint,
-  the back button steps through filter changes, and a filtered view is a
-  shareable link.
+- **Filter state lives in the URL.** Results render server-side on first paint
+  and a filtered view is a shareable link. Filter changes use `router.replace`,
+  so they do not each become a history entry.
 - **Serving scaling is client-side maths.** Instant, and a round trip per tap
   would be no more correct.
 - **No UI or state library.** Plain CSS custom properties and React state; the

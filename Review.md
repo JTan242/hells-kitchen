@@ -421,7 +421,8 @@ and renders new results.
 
 Three things fall out of that for free:
 
-- The **back button works.** It steps back through your filter changes.
+- The **back button leaves the page** rather than unwinding filters one by one,
+  because changes use `router.replace` rather than `push`.
 - A filtered view is a **shareable link.** Paste it to someone and they see what
   you see.
 - The **first paint is already correct.** Open a filtered URL and the server
@@ -623,8 +624,13 @@ adjustments — that logic belongs on the server, and the round trip becomes wor
 
 ### D7. Filter state in the URL, not React state
 
-**Why:** shareable links, working back button, correct server-rendered first
-paint. All three come free; none are available with `useState`.
+**Why:** shareable links and a correct server-rendered first paint, neither of
+which `useState` can give you.
+
+Filter changes use `router.replace`, so they do not stack history entries: the
+back button leaves the page instead of stepping back through every chip click.
+Using `push` would make back undo filters one at a time, at the cost of needing
+many presses to leave. Either is defensible; this picks the quicker exit.
 
 **Cost:** a navigation per filter change, and slightly more code than
 `useState` — reading and writing `URLSearchParams` instead of setting a variable.

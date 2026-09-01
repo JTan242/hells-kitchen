@@ -15,20 +15,15 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * The single place that talks to the backend. Every call goes through here so
- * error handling, the base URL, and caching policy are decided once rather than
- * re-invented at each call site.
- */
+/** The only place that talks to the backend, so base URL, caching and error
+ *  shaping are decided once. */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    // `no-store`: the data is filter-dependent and cheap to fetch, and stale
-    // results after a filter change would be worse than a round trip.
+    // Results are filter-dependent, so stale data is worse than a round trip.
     response = await fetch(`${API_BASE}${path}`, { cache: 'no-store', ...init });
   } catch {
-    // fetch only rejects on a transport failure, which almost always means the
-    // API is not running. Say that, rather than surfacing "fetch failed".
+    // fetch only rejects on transport failure, which usually means the API is down.
     throw new ApiError(`Cannot reach the recipe API at ${API_BASE}. Is the backend running?`, 0);
   }
 
@@ -48,10 +43,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-/**
- * Filters live in the page URL, so this takes the URL's own search params and
- * forwards them. Adding a filter means touching the UI and the API, not this.
- */
+/** Forwards the page's own search params, so new filters need no change here. */
 export function fetchRecipes(params: URLSearchParams): Promise<RecipeListResponse> {
   const query = params.toString();
   return request<RecipeListResponse>(`/api/recipes${query ? `?${query}` : ''}`);
@@ -65,10 +57,7 @@ export function fetchFacets(): Promise<Facets> {
   return request<Facets>('/api/facets');
 }
 
-/**
- * Creates a recipe. A 400 comes back as an ApiError carrying `fields`, so the
- * form can put each message next to the input it belongs to.
- */
+/** A 400 arrives as an ApiError carrying per-field messages in `fields`. */
 export function createRecipe(input: NewRecipeInput): Promise<RecipeDetail> {
   return request<RecipeDetail>('/api/recipes', {
     method: 'POST',

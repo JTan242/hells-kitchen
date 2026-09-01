@@ -1,25 +1,17 @@
 import type { Nutrition, NutritionSummary, ResolvedIngredient } from './types';
 
 /**
- * ASSUMPTION: the `nutrition` block on each ingredient is "per 100 g".
- * data.json doesn't say so, but the numbers line up with standard per-100 g
- * references (chicken breast 165 kcal, ground beef 250 kcal, mozzarella 280 kcal),
- * so that's the basis every calculation here uses.
+ * Ingredient nutrition is assumed to be per 100g. data.json does not state this;
+ * the values match standard per-100g references (chicken breast 165, beef 250).
  */
 const NUTRITION_BASIS_GRAMS = 100;
 
 /**
- * ASSUMPTION: recipes measure by volume and by count, but nutrition is by weight,
- * so we need a bridge. These are rough average weights, not per-ingredient
- * densities — a cup of flour (~120 g) and a cup of milk (~240 g) genuinely differ,
- * and we deliberately use one number for both. That makes totals an *estimate*,
- * which is why the API labels them as such rather than pretending to be exact.
- *
- * The real fix is a `gramsPerUnit` field on each ingredient row; this table is
- * the stand-in until the data has one.
+ * Approximate grams per unit, one figure per unit for every ingredient. A cup of
+ * flour and a cup of milk really differ by about 2x, so totals are estimates and
+ * are labelled as such in the UI. A `gramsPerUnit` field per ingredient would fix it.
  */
 const UNIT_GRAMS: Record<string, number> = {
-  // weight / volume
   g: 1,
   gram: 1,
   grams: 1,
@@ -29,12 +21,10 @@ const UNIT_GRAMS: Record<string, number> = {
   oz: 28.35,
   lb: 453.6,
   lbs: 453.6,
-  // cooking volume (water-ish density)
   cup: 240,
   cups: 240,
   tbsp: 15,
   tsp: 5,
-  // counted items — average edible weight
   small: 80,
   medium: 120,
   large: 180,
@@ -55,34 +45,28 @@ const UNIT_GRAMS: Record<string, number> = {
   pinch: 0.5,
 };
 
-/**
- * Parses the `amount` string. It is a string in the data because it holds things
- * like "1/3" and "2.5", so we handle plain decimals, fractions ("3/4") and mixed
- * numbers ("1 1/2"). Anything else returns null and is treated as uncountable.
- */
+/** Handles "2", "2.5", "3/4" and "1 1/2". Returns null for anything unreadable. */
 export function parseAmount(amount: string): number | null {
   const text = amount.trim();
   if (!text) return null;
 
   const mixed = /^(\d+)\s+(\d+)\s*\/\s*(\d+)$/.exec(text);
   if (mixed) {
-    const [, whole, num, den] = mixed;
-    const d = Number(den);
-    return d === 0 ? null : Number(whole) + Number(num) / d;
+    const d = Number(mixed[3]);
+    return d === 0 ? null : Number(mixed[1]) + Number(mixed[2]) / d;
   }
 
   const fraction = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/.exec(text);
   if (fraction) {
-    const [, num, den] = fraction;
-    const d = Number(den);
-    return d === 0 ? null : Number(num) / d;
+    const d = Number(fraction[2]);
+    return d === 0 ? null : Number(fraction[1]) / d;
   }
 
   const value = Number(text);
   return Number.isFinite(value) ? value : null;
 }
 
-/** Converts an amount + unit into grams, or null when we can't. */
+/** Null when the amount is unreadable or the unit is not in UNIT_GRAMS. */
 export function toGrams(amount: string, unit: string): number | null {
   const quantity = parseAmount(amount);
   if (quantity === null) return null;
@@ -91,7 +75,6 @@ export function toGrams(amount: string, unit: string): number | null {
   return perUnit === undefined ? null : quantity * perUnit;
 }
 
-/** Scales a per-100 g nutrition block to the given weight. */
 export function scaleNutrition(per100g: Nutrition, grams: number): Nutrition {
   const factor = grams / NUTRITION_BASIS_GRAMS;
   return {
@@ -105,12 +88,9 @@ export function scaleNutrition(per100g: Nutrition, grams: number): Nutrition {
 const round = (n: number): number => Math.round(n * 10) / 10;
 
 /**
- * Sums the line items of a recipe.
- *
- * Two things routinely go wrong and neither should throw: an ingredient id has
- * no row in the ingredients table (data.json has 8 of these), or its unit isn't
- * convertible. Both are skipped and reported in `skipped`, so the UI can show a
- * total *and* say what it's missing instead of showing a confidently wrong number.
+ * Sums the line items. Ingredients with no nutrition (missing row or unknown
+ * unit) are skipped and named in `skipped` rather than counted as zero, so the
+ * caller can show a total and say what it excludes.
  */
 export function summariseNutrition(
   ingredients: ResolvedIngredient[],
@@ -130,7 +110,7 @@ export function summariseNutrition(
     total.fat += item.nutrition.fat;
   }
 
-  // Guard against a bad `servings` value rather than emitting Infinity/NaN.
+  // Guards against a servings: 0 in the data producing Infinity.
   const divisor = servings > 0 ? servings : 1;
 
   return {

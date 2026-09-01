@@ -1,9 +1,6 @@
 /**
- * Domain + API types.
- *
- * "Raw*" types mirror db/data.json exactly. Everything else is what the API
- * hands back to the frontend, which is deliberately a richer shape: the
- * frontend should never have to re-do joins or maths that belong on the server.
+ * `Raw*` types mirror db/data.json exactly. Everything else is the API contract,
+ * built by joining the two and running the nutrition maths.
  */
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
@@ -15,7 +12,7 @@ export interface Nutrition {
   fat: number;
 }
 
-/** A row in data.json `ingredients` — nutrition is per 100g (see nutrition.ts). */
+/** Nutrition values are per 100g — see nutrition.ts. */
 export interface RawIngredient {
   id: string;
   name: string;
@@ -25,14 +22,13 @@ export interface RawIngredient {
   dietary: string[];
 }
 
-/** How a recipe references an ingredient: an id plus an amount + unit. */
+/** `amount` is a string because the data holds fractions like "1/3". */
 export interface RawRecipeIngredient {
   ingredientId: string;
   amount: string;
   unit: string;
 }
 
-/** A row in data.json `recipes`. */
 export interface RawRecipe {
   id: string;
   title: string;
@@ -52,31 +48,29 @@ export interface Database {
   ingredients: RawIngredient[];
 }
 
-/** A recipe ingredient after being joined against the ingredients table. */
+/** A recipe ingredient joined against the ingredients table. */
 export interface ResolvedIngredient extends RawRecipeIngredient {
-  /** Falls back to a humanised form of `ingredientId` when the row is missing. */
+  /** Humanised from `ingredientId` when the row is missing. */
   name: string;
   category: string | null;
   dietary: string[];
   allergens: string[];
-  /** Nutrition contributed by *this line item* (amount x unit), not per 100g. */
+  /** This line item's contribution, or null if the row or unit was unknown. */
   nutrition: Nutrition | null;
-  /** Grams this line item was estimated to weigh; null when we couldn't convert. */
   grams: number | null;
-  /** True when `ingredientId` has no row in the ingredients table. */
   missing: boolean;
 }
 
 export interface NutritionSummary {
   total: Nutrition;
   perServing: Nutrition;
-  /** False when at least one ingredient could not be counted. */
+  /** False when an ingredient was left out of the total. */
   complete: boolean;
-  /** Ingredient ids that were skipped, so the UI can be honest about it. */
+  /** Ingredient ids omitted from the total. */
   skipped: string[];
 }
 
-/** Shape returned by GET /api/recipes — enough to render a card, nothing more. */
+/** GET /api/recipes — enough to render a card. */
 export interface RecipeSummary {
   id: string;
   title: string;
@@ -93,16 +87,14 @@ export interface RecipeSummary {
   allergens: string[];
   caloriesPerServing: number;
   /**
-   * Ingredient ids with no row in the ingredients table. Non-empty means we do
-   * not actually know everything this recipe contains — which is why the
-   * allergen filter refuses to vouch for it (see listRecipes).
+   * Ingredient ids with no row in the table. Non-empty means the recipe's
+   * contents are not fully known, so the allergen filter will not vouch for it.
    */
   unknownIngredients: string[];
-  /** False when any ingredient was left out of the calorie total. */
   nutritionComplete: boolean;
 }
 
-/** Shape returned by GET /api/recipes/:id. */
+/** GET /api/recipes/:id. */
 export interface RecipeDetail extends RecipeSummary {
   ingredients: ResolvedIngredient[];
   instructions: string[];
@@ -131,13 +123,9 @@ export interface RecipeQuery {
   order: SortOrder;
 }
 
-/** Every value the filter UI needs to build its controls, derived from the data. */
 /**
- * What POST /api/recipes accepts, after validation.
- *
- * Deliberately not the same as RawRecipe: times arrive as plain minutes rather
- * than "20 minutes" strings, and the server owns `id` and `dateAdded` - a client
- * must not be able to choose either.
+ * POST /api/recipes body, after validation. Times are plain minutes here;
+ * `id` and `dateAdded` are assigned by the server, never the client.
  */
 export interface NewRecipeInput {
   title: string;
@@ -151,21 +139,17 @@ export interface NewRecipeInput {
   tags: string[];
 }
 
-/** Envelope for GET /api/recipes. */
 export interface RecipeListResult {
   recipes: RecipeSummary[];
-  /** How many recipes an allergen filter withheld for having unknown ingredients. */
+  /** Recipes an allergen filter withheld for having unknown ingredients. */
   withheld: number;
 }
 
+/** Filter options derived from the data, so the UI hardcodes nothing. */
 export interface Facets {
   tags: string[];
   ingredients: { id: string; name: string }[];
   difficulties: Difficulty[];
   dietary: string[];
   allergens: string[];
-}
-
-export interface ApiError {
-  error: { message: string; code: string };
 }

@@ -1,9 +1,6 @@
 'use client';
 
-/**
- * Catches anything the pages did not handle themselves, so an unexpected throw
- * shows a recoverable screen instead of a blank page.
- */
+/** Catches throws the pages did not handle, so they show a recoverable screen. */
 export default function Error({ error, reset }: { error: Error; reset: () => void }) {
   return (
     <div className="error-box">

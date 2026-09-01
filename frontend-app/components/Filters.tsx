@@ -14,20 +14,19 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 ];
 
 /**
- * All filter state lives in the URL rather than in React state.
+ * Filter state lives in the URL, not React state, so results render server-side
+ * on first paint and filtered views are shareable links. Each change costs a
+ * navigation.
  *
- * That means the server component above can render the correct results on first
- * paint, the browser back button steps through filter changes, and a filtered
- * view is a link you can share. The cost is a navigation per change, which Next
- * makes cheap because only the changed segment re-renders.
+ * `replace` rather than `push`: filter changes do not stack history entries, so
+ * back leaves the page instead of unwinding one chip at a time.
  */
 export function Filters({ facets, resultCount }: { facets: Facets; resultCount: number }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
 
-  // The text box is the one control that needs local state: we debounce it so a
-  // request is not fired on every keystroke.
+  // The only control with local state, so typing can be debounced.
   const [search, setSearch] = useState(params.get('search') ?? '');
   const isFirstRender = useRef(true);
 
@@ -43,8 +42,8 @@ export function Filters({ facets, resultCount }: { facets: Facets; resultCount: 
       router.replace(`${pathname}?${next.toString()}`, { scroll: false });
     }, 250);
     return () => clearTimeout(timer);
-    // `params` is intentionally excluded: including it would restart the debounce
-    // on every URL change, including the ones this effect itself causes.
+    // `params` is excluded deliberately: it would restart the debounce on every
+    // URL change, including the ones this effect causes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, pathname, router]);
 
@@ -136,30 +135,22 @@ export function Filters({ facets, resultCount }: { facets: Facets; resultCount: 
         </div>
       </div>
 
-      <FilterGroup
-        label="Diet"
-        options={facets.dietary}
-        selected={selected('dietary')}
-        onToggle={(v) => toggle('dietary', v)}
-      />
-      <FilterGroup
-        label="Difficulty"
-        options={facets.difficulties}
-        selected={selected('difficulty')}
-        onToggle={(v) => toggle('difficulty', v)}
-      />
-      <FilterGroup
-        label="Tags"
-        options={facets.tags}
-        selected={selected('tags')}
-        onToggle={(v) => toggle('tags', v)}
-      />
-      <FilterGroup
-        label="Exclude allergens"
-        options={facets.allergens}
-        selected={selected('excludeAllergens')}
-        onToggle={(v) => toggle('excludeAllergens', v)}
-      />
+      {(
+        [
+          ['dietary', 'Diet', facets.dietary],
+          ['difficulty', 'Difficulty', facets.difficulties],
+          ['tags', 'Tags', facets.tags],
+          ['excludeAllergens', 'Exclude allergens', facets.allergens],
+        ] as const
+      ).map(([key, label, options]) => (
+        <FilterGroup
+          key={key}
+          label={label}
+          options={options}
+          selected={selected(key)}
+          onToggle={(v) => toggle(key, v)}
+        />
+      ))}
       <IngredientPicker
         options={facets.ingredients}
         selected={selected('ingredients')}
@@ -202,8 +193,8 @@ function FilterGroup({
             key={option}
             type="button"
             className="chip"
-            // aria-pressed carries the selected state for assistive tech and
-            // drives the highlight styling, so the two can never disagree.
+            // Also drives the highlight styling, so visual and announced state
+            // cannot disagree.
             aria-pressed={selected.includes(option)}
             onClick={() => onToggle(option)}
           >
@@ -216,11 +207,8 @@ function FilterGroup({
 }
 
 /**
- * Exact ingredient matching - "what can I make with chicken and ginger".
- *
- * A chip row would be 46 buttons, so this is a native select that adds one at a
- * time, with the chosen ones shown as removable chips. Native means it is
- * searchable by typing, works on mobile, and needs no dependency.
+ * Exact ingredient matching. A chip row would be 46 buttons, so this adds one at
+ * a time via a native select, with the chosen ones shown as removable chips.
  */
 function IngredientPicker({
   options,
@@ -242,8 +230,7 @@ function IngredientPicker({
       <div className="control-row">
         <select
           id="ingredients"
-          // Always reset to the placeholder: the select is an "add" action, not
-          // a display of current state - the chips below are that.
+          // Always resets: this is an add action, and the chips below are the state.
           value=""
           onChange={(e) => e.target.value && onToggle(e.target.value)}
           style={{ maxWidth: 240 }}

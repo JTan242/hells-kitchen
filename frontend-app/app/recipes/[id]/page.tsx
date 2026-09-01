@@ -11,11 +11,8 @@ import type { RecipeDetail } from '@/lib/types';
 type Params = Promise<{ id: string }>;
 
 /**
- * Fetch once and return either the recipe or the error, so the page can tell a
- * genuine 404 apart from "the API is down" — those deserve different screens.
- *
- * Wrapped in React's `cache` because Next calls `generateMetadata` and the page
- * component separately: without it, one page view would hit the API twice.
+ * Returns the recipe or the error so a 404 and an unreachable API get different
+ * screens. `cache` dedupes the fetch across generateMetadata and the page body.
  */
 const load = cache(async (id: string): Promise<RecipeDetail | ApiError> => {
   try {
@@ -30,7 +27,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const { id } = await params;
   const recipe = await load(id);
   if (recipe instanceof ApiError) {
-    // A 404 and an unreachable API are different failures; the tab title says which.
+    // The tab title distinguishes the two failures.
     return { title: recipe.status === 404 ? 'Recipe not found' : 'Recipe unavailable' };
   }
   return { title: `${recipe.title} · Recipe Manager`, description: recipe.description };
@@ -41,7 +38,7 @@ export default async function RecipePage({ params }: { params: Params }) {
   const recipe = await load(id);
 
   if (recipe instanceof ApiError) {
-    // A missing recipe is Next's own not-found screen; anything else is our problem.
+    // notFound() renders not-found.tsx and sends a real 404 status.
     if (recipe.status === 404) notFound();
     return <ErrorBox title="Could not load this recipe" message={recipe.message} />;
   }
@@ -93,15 +90,14 @@ export default async function RecipePage({ params }: { params: Params }) {
       </header>
 
       <div className="detail-grid">
-        {/* Interactive half: ingredients + nutrition move together with servings. */}
+        {/* Ingredients and nutrition move together with the serving count. */}
         <ServingScaler recipe={recipe} />
 
         <section className="panel">
           <h3>Instructions</h3>
           <ol className="steps">
             {recipe.instructions.map((step, index) => (
-              // Steps have no ids and their order is their identity, so the index
-              // is a legitimate key here: the list is never reordered or filtered.
+              // Index is a safe key: steps have no ids and are never reordered.
               <li key={index}>{step}</li>
             ))}
           </ol>

@@ -8,19 +8,13 @@ const MIN_SERVINGS = 1;
 const MAX_SERVINGS = 99;
 
 /**
- * Ingredients and nutrition in one component because one control drives both:
- * changing the serving count has to move the quantities and the calorie numbers
- * together, and splitting them would mean lifting the same state into a parent
- * for no gain.
- *
- * All the maths is client-side (see lib/format.ts) so adjusting servings is
- * instant rather than a request per click.
+ * Ingredients and nutrition together, since one serving control drives both.
+ * Scaling maths runs client-side (lib/format.ts), so there is no request per tap.
  */
 export function ServingScaler({ recipe }: { recipe: RecipeDetail }) {
   const [servings, setServings] = useState(recipe.servings);
 
-  // Per-serving values are by definition unaffected by the serving count, so the
-  // factor applies to totals and ingredient quantities only.
+  // Per-serving figures do not scale by definition; totals and quantities do.
   const factor = recipe.servings > 0 ? servings / recipe.servings : 1;
   const total = scaleNutrition(recipe.nutrition.total, factor);
   const perServing = recipe.nutrition.perServing;
@@ -65,7 +59,7 @@ export function ServingScaler({ recipe }: { recipe: RecipeDetail }) {
             <li key={ingredient.ingredientId}>
               <span>
                 {ingredient.name}
-                {/* Being explicit beats silently dropping it from the totals. */}
+                {/* Flagged rather than silently dropped from the totals. */}
                 {ingredient.missing && (
                   <span className="chip warn" style={{ marginLeft: 8 }}>
                     no nutrition data
@@ -73,7 +67,7 @@ export function ServingScaler({ recipe }: { recipe: RecipeDetail }) {
                 )}
               </span>
               <span className="qty">
-                {scaleAmount(ingredient.amount, factor)} {ingredient.unit}
+                {scaleAmount(ingredient.amount, factor, ingredient.unit)} {ingredient.unit}
               </span>
             </li>
           ))}

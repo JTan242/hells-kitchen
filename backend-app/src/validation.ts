@@ -1,15 +1,11 @@
 import type { NewRecipeInput } from './types';
 
 /**
- * Validation for the one endpoint that accepts a body.
- *
- * This is the same job routes.ts does for query strings - turning untrusted
- * input into something the service layer can rely on - but a recipe body is a
- * nested structure, so it gets its own file rather than doubling the size of
- * routes.ts.
+ * Validates the POST /api/recipes body. Same boundary job as the query-param
+ * readers in routes.ts, split out because the body is a nested structure.
  *
  * Errors are collected per field rather than thrown on the first problem, so the
- * form can show every mistake at once instead of one per round trip.
+ * form can show every mistake at once. Keys match the form's input names.
  */
 
 export type FieldErrors = Record<string, string>;
@@ -33,7 +29,7 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-/** Same fraction handling as nutrition.ts, so "1/3" is accepted in the form. */
+/** Mirrors what nutrition.parseAmount accepts, so "1/3" is valid input. */
 function isParseableAmount(value: string): boolean {
   return /^\d+(\.\d+)?$/.test(value) || /^(\d+\s+)?\d+(\.\d+)?\s*\/\s*\d*[1-9]\d*$/.test(value);
 }
@@ -54,14 +50,14 @@ export function validateNewRecipe(body: unknown): ValidationResult {
     errors.description = `Description must be under ${MAX_TEXT} characters`;
   }
 
-  // Number() rather than parseInt: "4abc" should be rejected, not silently read as 4.
+  // Number() rather than parseInt, which would read "4abc" as 4.
   const servings = Number(body.servings);
   if (!Number.isInteger(servings) || servings < 1 || servings > 100) {
     errors.servings = 'Servings must be a whole number between 1 and 100';
   }
 
-  // Named `*Minutes` on the wire too, so nothing has to guess whether the value
-  // is a number of minutes or a "20 minutes" string like RawRecipe uses.
+  // Named `*Minutes` on the wire so it is never confused with RawRecipe's
+  // "20 minutes" string form.
   const times = { prepTimeMinutes: 0, cookTimeMinutes: 0 };
   for (const field of ['prepTimeMinutes', 'cookTimeMinutes'] as const) {
     const minutes = Number(body[field]);
@@ -79,7 +75,7 @@ export function validateNewRecipe(body: unknown): ValidationResult {
     errors.difficulty = 'Difficulty must be easy, medium or hard';
   }
 
-  // Ingredients: at least one, each needing an id, a readable amount and a unit.
+  // At least one ingredient, each with an id, a readable amount and a unit.
   const rawIngredients = Array.isArray(body.ingredients) ? body.ingredients : [];
   const ingredients: NewRecipeInput['ingredients'] = [];
   if (rawIngredients.length === 0) {
@@ -117,7 +113,7 @@ export function validateNewRecipe(body: unknown): ValidationResult {
     errors.instructions = `Each step must be under ${MAX_INSTRUCTION} characters`;
   }
 
-  // Tags are optional; normalise to lowercase so they match the existing facets.
+  // Optional. Lowercased so they match existing facet values.
   const rawTags = Array.isArray(body.tags) ? body.tags : [];
   const tags = [...new Set(rawTags.map((t) => text(t).toLowerCase()).filter(Boolean))].slice(0, 20);
 

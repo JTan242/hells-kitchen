@@ -9,11 +9,7 @@ export const metadata: Metadata = {
   description: 'Add a recipe to the collection.',
 };
 
-/**
- * Wraps the form. The facets (ingredients, tags, difficulties) are fetched here
- * on the server so the form has its dropdown options in the first render — the
- * ingredient list is the same one the filter bar uses.
- */
+/** Fetches facets server-side so the form has its options on first render. */
 export default async function NewRecipePage() {
   const facets = await fetchFacets().catch((error: unknown) => error as Error);
 

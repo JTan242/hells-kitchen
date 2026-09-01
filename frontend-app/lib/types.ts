@@ -1,10 +1,7 @@
 /**
- * The API contract, from the client's side.
- *
- * TRADE-OFF: this duplicates `backend-app/src/types.ts` by hand. A shared
- * workspace package would guarantee they stay in step, but it adds monorepo
- * tooling to a two-app take-home. Copying is the cheaper choice at this size;
- * the moment a third consumer appears, extract a `packages/shared` instead.
+ * The API contract. Hand-mirrored from backend-app/src/types.ts, so the two can
+ * drift — change both together. Extract a shared package if a third consumer
+ * appears.
  */
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
@@ -70,11 +67,7 @@ export interface RecipeListResponse {
   withheld: number;
 }
 
-/**
- * What the create form sends. Times are plain minutes here; the server turns them
- * into the "20 minutes" strings the rest of the data uses. `id` and `dateAdded`
- * are the server's to assign.
- */
+/** POST body. Times are plain minutes; `id` and `dateAdded` are server-assigned. */
 export interface NewRecipeInput {
   title: string;
   description: string;

@@ -6,59 +6,82 @@ import Link from 'next/link';
 import { ApiError, createRecipe } from '@/lib/api';
 import type { Difficulty, Facets } from '@/lib/types';
 
-/** Units nutrition.ts can convert. Offered as suggestions, not enforced — an
- *  unknown unit is handled the same way an unknown ingredient is. */
+/** Suggestions only. An unlisted unit is accepted and handled as unconvertible. */
 const UNITS = [
   'g', 'ml', 'oz', 'lb', 'cup', 'cups', 'tbsp', 'tsp',
   'small', 'medium', 'large', 'whole', 'pieces', 'cloves', 'leaves', 'slices',
 ];
 
-interface IngredientRow {
+interface Row {
   ingredientId: string;
   amount: string;
   unit: string;
 }
 
-const EMPTY_ROW: IngredientRow = { ingredientId: '', amount: '', unit: '' };
+const EMPTY_ROW: Row = { ingredientId: '', amount: '', unit: '' };
+
+/** Removes index `i`, unless it is the only entry — an empty form is a dead end. */
+function removeAt<T>(items: T[], i: number): T[] {
+  return items.length > 1 ? items.filter((_, n) => n !== i) : items;
+}
 
 /**
- * The create-recipe form.
- *
- * The only place in the app that writes. Validation is the server's job — this
- * sends what the user typed and renders whatever `fields` come back on a 400,
- * so there is exactly one set of rules rather than two that can disagree.
- * The browser's own `required`/`min` attributes catch the obvious cases first,
- * which saves a round trip without becoming a second source of truth.
+ * Label + control + the server's error for that field. Defined at module scope:
+ * a component declared inside a render body is a fresh type each render, which
+ * remounts its children and loses input focus while typing.
+ */
+function Field({
+  name,
+  label,
+  error,
+  hideLabel,
+  style,
+  children,
+}: {
+  name: string;
+  label: string;
+  error?: string;
+  hideLabel?: boolean;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="field" style={style}>
+      <label className={hideLabel ? 'sr-only' : undefined} htmlFor={name}>
+        {label}
+      </label>
+      {children}
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
+
+/**
+ * Create-recipe form. Validation is server-side only; a 400 returns per-field
+ * messages keyed to these input names, which `Field` renders inline.
  */
 export function RecipeForm({ facets }: { facets: Facets }) {
   const router = useRouter();
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [servings, setServings] = useState('4');
-  const [prepTime, setPrepTime] = useState('15');
-  const [cookTime, setCookTime] = useState('20');
-  const [difficulty, setDifficulty] = useState<Difficulty>('easy');
-  const [tags, setTags] = useState('');
-  const [ingredients, setIngredients] = useState<IngredientRow[]>([{ ...EMPTY_ROW }]);
+  const [values, setValues] = useState({
+    title: '',
+    description: '',
+    servings: '4',
+    prepTimeMinutes: '15',
+    cookTimeMinutes: '20',
+    difficulty: 'easy',
+    tags: '',
+  });
+  const [ingredients, setIngredients] = useState<Row[]>([{ ...EMPTY_ROW }]);
   const [instructions, setInstructions] = useState<string[]>(['']);
-
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  const setRow = (index: number, patch: Partial<IngredientRow>) =>
-    setIngredients((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const set = (key: keyof typeof values, value: string) =>
+    setValues((v) => ({ ...v, [key]: value }));
 
-  const addRow = () => setIngredients((rows) => [...rows, { ...EMPTY_ROW }]);
-  // Never remove the last row: an empty form with no inputs is a dead end.
-  const removeRow = (index: number) =>
-    setIngredients((rows) => (rows.length > 1 ? rows.filter((_, i) => i !== index) : rows));
-
-  const setStep = (index: number, value: string) =>
-    setInstructions((steps) => steps.map((step, i) => (i === index ? value : step)));
-  const addStep = () => setInstructions((steps) => [...steps, '']);
-  const removeStep = (index: number) =>
-    setInstructions((steps) => (steps.length > 1 ? steps.filter((_, i) => i !== index) : steps));
+  const setRow = (i: number, patch: Partial<Row>) =>
+    setIngredients((rows) => rows.map((row, n) => (n === i ? { ...row, ...patch } : row)));
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -67,40 +90,36 @@ export function RecipeForm({ facets }: { facets: Facets }) {
 
     try {
       const recipe = await createRecipe({
-        title,
-        description,
-        servings: Number(servings),
-        prepTimeMinutes: Number(prepTime),
-        cookTimeMinutes: Number(cookTime),
-        difficulty,
+        ...values,
+        // Constrained by the select, which only offers facets.difficulties.
+        difficulty: values.difficulty as Difficulty,
+        servings: Number(values.servings),
+        prepTimeMinutes: Number(values.prepTimeMinutes),
+        cookTimeMinutes: Number(values.cookTimeMinutes),
         ingredients,
         instructions,
-        tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+        tags: values.tags.split(',').map((t) => t.trim()).filter(Boolean),
       });
-      // Straight to the recipe that was just created — the POST already returned
-      // it in full, so this needs no extra request.
+      // The POST returns the full recipe, so the detail page needs no refetch.
       router.push(`/recipes/${recipe.id}`);
     } catch (error) {
-      if (error instanceof ApiError) {
-        setErrors(
-          Object.keys(error.fields).length > 0 ? error.fields : { _: error.message },
-        );
-      } else {
-        setErrors({ _: 'Something went wrong. Please try again.' });
-      }
+      const fields = error instanceof ApiError ? error.fields : {};
+      setErrors(
+        Object.keys(fields).length > 0
+          ? fields
+          : { _: error instanceof ApiError ? error.message : 'Something went wrong.' },
+      );
       setSubmitting(false);
     }
   }
 
-  /** Renders the server's message for a field, if it sent one. */
-  const Err = ({ name }: { name: string }) =>
-    errors[name] ? <span className="field-error">{errors[name]}</span> : null;
-
+  // noValidate: native validation stops at the first invalid field, which would
+  // hide the server's all-at-once field errors. `required` stays for semantics.
   return (
-    <form className="stack" onSubmit={handleSubmit} noValidate={false}>
+    <form className="stack" onSubmit={handleSubmit} noValidate>
       <p className="notice">
         Recipes you add are kept <strong>in memory only</strong> and disappear when the
-        API restarts. The data file is a fixture and is never modified.
+        API restarts. The data file is never modified.
       </p>
 
       {errors._ && <div className="error-box">{errors._}</div>}
@@ -108,80 +127,53 @@ export function RecipeForm({ facets }: { facets: Facets }) {
       <section className="panel stack" style={{ gap: 14 }}>
         <h3>Basics</h3>
 
-        <div className="field">
-          <label htmlFor="title">Title</label>
+        <Field name="title" label="Title" error={errors.title}>
           <input
             id="title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            value={values.title}
+            onChange={(e) => set('title', e.target.value)}
             placeholder="Roast Chicken"
             required
             maxLength={200}
           />
-          <Err name="title" />
-        </div>
+        </Field>
 
-        <div className="field">
-          <label htmlFor="description">Description</label>
+        <Field name="description" label="Description" error={errors.description}>
           <input
             id="description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            value={values.description}
+            onChange={(e) => set('description', e.target.value)}
             placeholder="A short line about the dish"
             maxLength={200}
           />
-          <Err name="description" />
-        </div>
+        </Field>
 
         <div className="control-row">
-          <div className="field">
-            <label htmlFor="servings">Servings</label>
-            <input
-              id="servings"
-              type="number"
-              min={1}
-              max={100}
-              value={servings}
-              onChange={(e) => setServings(e.target.value)}
-              required
-            />
-            <Err name="servings" />
-          </div>
+          {(
+            [
+              ['servings', 'Servings', 1],
+              ['prepTimeMinutes', 'Prep (minutes)', 1],
+              ['cookTimeMinutes', 'Cook (minutes)', 0],
+            ] as const
+          ).map(([name, label, min]) => (
+            <Field key={name} name={name} label={label} error={errors[name]}>
+              <input
+                id={name}
+                type="number"
+                min={min}
+                max={name === 'servings' ? 100 : 1440}
+                value={values[name]}
+                onChange={(e) => set(name, e.target.value)}
+                required
+              />
+            </Field>
+          ))}
 
-          <div className="field">
-            <label htmlFor="prepTime">Prep (minutes)</label>
-            <input
-              id="prepTime"
-              type="number"
-              min={1}
-              max={1440}
-              value={prepTime}
-              onChange={(e) => setPrepTime(e.target.value)}
-              required
-            />
-            <Err name="prepTimeMinutes" />
-          </div>
-
-          <div className="field">
-            <label htmlFor="cookTime">Cook (minutes)</label>
-            <input
-              id="cookTime"
-              type="number"
-              min={0}
-              max={1440}
-              value={cookTime}
-              onChange={(e) => setCookTime(e.target.value)}
-              required
-            />
-            <Err name="cookTimeMinutes" />
-          </div>
-
-          <div className="field">
-            <label htmlFor="difficulty">Difficulty</label>
+          <Field name="difficulty" label="Difficulty" error={errors.difficulty}>
             <select
               id="difficulty"
-              value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value as Difficulty)}
+              value={values.difficulty}
+              onChange={(e) => set('difficulty', e.target.value)}
             >
               {facets.difficulties.map((level) => (
                 <option key={level} value={level}>
@@ -189,44 +181,45 @@ export function RecipeForm({ facets }: { facets: Facets }) {
                 </option>
               ))}
             </select>
-            <Err name="difficulty" />
-          </div>
+          </Field>
         </div>
 
-        <div className="field">
-          <label htmlFor="tags">Tags</label>
+        <Field name="tags" label="Tags" error={errors.tags}>
           <input
             id="tags"
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
+            value={values.tags}
+            onChange={(e) => set('tags', e.target.value)}
             placeholder="dinner, italian (comma separated)"
             list="known-tags"
           />
-          {/* Suggestions come from the data, so new recipes reuse existing tags
-              rather than inventing near-duplicates. */}
+          {/* Suggested from existing data so new recipes reuse tags rather than
+              inventing near-duplicates. */}
           <datalist id="known-tags">
             {facets.tags.map((tag) => (
               <option key={tag} value={tag} />
             ))}
           </datalist>
-          <Err name="tags" />
-        </div>
+        </Field>
       </section>
 
       <section className="panel stack" style={{ gap: 12 }}>
         <h3>Ingredients</h3>
-        <Err name="ingredients" />
+        {errors.ingredients && <span className="field-error">{errors.ingredients}</span>}
 
-        {ingredients.map((row, index) => (
-          <div key={index} className="row-editor">
-            <div className="field" style={{ flex: '2 1 200px' }}>
-              <label className="sr-only" htmlFor={`ingredient-${index}`}>
-                Ingredient {index + 1}
-              </label>
+        {ingredients.map((row, i) => (
+          <div key={i} className="row-editor">
+            {/* Restricted to known ingredients so nutrition always resolves. */}
+            <Field
+              name={`ingredients.${i}.ingredientId`}
+              label={`Ingredient ${i + 1}`}
+              error={errors[`ingredients.${i}.ingredientId`]}
+              hideLabel
+              style={{ flex: '2 1 200px' }}
+            >
               <select
-                id={`ingredient-${index}`}
+                id={`ingredients.${i}.ingredientId`}
                 value={row.ingredientId}
-                onChange={(e) => setRow(index, { ingredientId: e.target.value })}
+                onChange={(e) => setRow(i, { ingredientId: e.target.value })}
               >
                 <option value="">Choose an ingredient…</option>
                 {facets.ingredients.map((option) => (
@@ -235,42 +228,38 @@ export function RecipeForm({ facets }: { facets: Facets }) {
                   </option>
                 ))}
               </select>
-              <Err name={`ingredients.${index}.ingredientId`} />
-            </div>
+            </Field>
 
-            <div className="field" style={{ flex: '1 1 90px', minWidth: 90 }}>
-              <label className="sr-only" htmlFor={`amount-${index}`}>
-                Amount
-              </label>
-              <input
-                id={`amount-${index}`}
-                value={row.amount}
-                onChange={(e) => setRow(index, { amount: e.target.value })}
-                placeholder="2 or 1/3"
-              />
-              <Err name={`ingredients.${index}.amount`} />
-            </div>
-
-            <div className="field" style={{ flex: '1 1 90px', minWidth: 90 }}>
-              <label className="sr-only" htmlFor={`unit-${index}`}>
-                Unit
-              </label>
-              <input
-                id={`unit-${index}`}
-                value={row.unit}
-                onChange={(e) => setRow(index, { unit: e.target.value })}
-                placeholder="cups"
-                list="known-units"
-              />
-              <Err name={`ingredients.${index}.unit`} />
-            </div>
+            {(
+              [
+                ['amount', 'Amount', '2 or 1/3', undefined],
+                ['unit', 'Unit', 'cups', 'known-units'],
+              ] as const
+            ).map(([key, label, placeholder, list]) => (
+              <Field
+                key={key}
+                name={`ingredients.${i}.${key}`}
+                label={label}
+                error={errors[`ingredients.${i}.${key}`]}
+                hideLabel
+                style={{ flex: '1 1 90px', minWidth: 90 }}
+              >
+                <input
+                  id={`ingredients.${i}.${key}`}
+                  value={row[key]}
+                  onChange={(e) => setRow(i, { [key]: e.target.value })}
+                  placeholder={placeholder}
+                  list={list}
+                />
+              </Field>
+            ))}
 
             <button
               type="button"
               className="chip"
-              onClick={() => removeRow(index)}
+              onClick={() => setIngredients((rows) => removeAt(rows, i))}
               disabled={ingredients.length === 1}
-              aria-label={`Remove ingredient ${index + 1}`}
+              aria-label={`Remove ingredient ${i + 1}`}
             >
               ×
             </button>
@@ -284,7 +273,11 @@ export function RecipeForm({ facets }: { facets: Facets }) {
         </datalist>
 
         <div>
-          <button type="button" className="link-button" onClick={addRow}>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => setIngredients((rows) => [...rows, { ...EMPTY_ROW }])}
+          >
             + Add ingredient
           </button>
         </div>
@@ -292,28 +285,27 @@ export function RecipeForm({ facets }: { facets: Facets }) {
 
       <section className="panel stack" style={{ gap: 12 }}>
         <h3>Instructions</h3>
-        <Err name="instructions" />
+        {errors.instructions && <span className="field-error">{errors.instructions}</span>}
 
-        {instructions.map((step, index) => (
-          <div key={index} className="row-editor">
-            <div className="field grow">
-              <label className="sr-only" htmlFor={`step-${index}`}>
-                Step {index + 1}
-              </label>
+        {instructions.map((step, i) => (
+          <div key={i} className="row-editor">
+            <Field name={`step-${i}`} label={`Step ${i + 1}`} hideLabel style={{ flex: 1 }}>
               <input
-                id={`step-${index}`}
+                id={`step-${i}`}
                 value={step}
-                onChange={(e) => setStep(index, e.target.value)}
-                placeholder={`Step ${index + 1}`}
+                onChange={(e) =>
+                  setInstructions((steps) => steps.map((s, n) => (n === i ? e.target.value : s)))
+                }
+                placeholder={`Step ${i + 1}`}
                 maxLength={1000}
               />
-            </div>
+            </Field>
             <button
               type="button"
               className="chip"
-              onClick={() => removeStep(index)}
+              onClick={() => setInstructions((steps) => removeAt(steps, i))}
               disabled={instructions.length === 1}
-              aria-label={`Remove step ${index + 1}`}
+              aria-label={`Remove step ${i + 1}`}
             >
               ×
             </button>
@@ -321,7 +313,11 @@ export function RecipeForm({ facets }: { facets: Facets }) {
         ))}
 
         <div>
-          <button type="button" className="link-button" onClick={addStep}>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => setInstructions((steps) => [...steps, ''])}
+          >
             + Add step
           </button>
         </div>

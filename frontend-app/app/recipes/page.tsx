@@ -8,13 +8,8 @@ import { ErrorBox } from '@/components/ErrorBox';
 /** Next 15 passes search params as a promise; every value can also be an array. */
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/**
- * Turns the page's own search params back into a query string for the API.
- *
- * The filter names the UI uses and the ones the API accepts are deliberately the
- * same, so this is a pass-through. Anything the API does not recognise it ignores,
- * which is why no allow-list is needed here.
- */
+/** Pass-through: UI and API use the same filter names, and the API ignores
+ *  anything it does not recognise. */
 function toQuery(params: Record<string, string | string[] | undefined>): URLSearchParams {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -28,8 +23,7 @@ function toQuery(params: Record<string, string | string[] | undefined>): URLSear
 export default async function RecipesPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
 
-  // The list and the filter options are independent, so fetch them together
-  // rather than waiting for one before starting the other.
+  // Independent requests, so they run concurrently.
   const [result, facets] = await Promise.all([
     fetchRecipes(toQuery(params)).catch((error: unknown) => error as Error),
     fetchFacets().catch((error: unknown) => error as Error),
@@ -47,8 +41,7 @@ export default async function RecipesPage({ searchParams }: { searchParams: Sear
         </Link>
       </div>
 
-      {/* useSearchParams needs a Suspense boundary; the fallback is a plain
-          count so the page never flashes empty. */}
+      {/* useSearchParams requires a Suspense boundary. */}
       <Suspense fallback={<p className="result-count">{result.total} recipes</p>}>
         {facets instanceof Error ? (
           <p className="result-count">{result.total} recipes (filters unavailable)</p>
@@ -57,8 +50,7 @@ export default async function RecipesPage({ searchParams }: { searchParams: Sear
         )}
       </Suspense>
 
-      {/* Say why an allergen filter returned fewer recipes than expected. Silently
-          dropping them would look like a bug; explaining it is the whole point. */}
+      {/* Explains why an allergen filter returned fewer recipes than expected. */}
       {result.withheld > 0 && (
         <p className="notice">
           {result.withheld} {result.withheld === 1 ? 'recipe is' : 'recipes are'} hidden because

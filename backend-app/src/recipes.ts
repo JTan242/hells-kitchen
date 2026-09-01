@@ -3,10 +3,9 @@ import { scaleNutrition, summariseNutrition, toGrams } from './nutrition';
 import type {
   Difficulty,
   Facets,
+  NewRecipeInput,
   RawRecipe,
   RecipeDetail,
-  NewRecipeInput,
-  RawRecipeIngredient,
   RecipeListResult,
   RecipeQuery,
   RecipeSummary,
@@ -22,13 +21,13 @@ function toDifficulty(value: string): Difficulty {
   return v === 'easy' || v === 'medium' || v === 'hard' ? v : 'medium';
 }
 
-/** "20 minutes" -> 20. Returns 0 for anything we cannot read a number out of. */
+/** "20 minutes" -> 20, and 0 for anything without a number. */
 export function parseMinutes(value: string): number {
   const match = /(\d+(?:\.\d+)?)/.exec(value ?? '');
   return match ? Number(match[1]) : 0;
 }
 
-/** "brown_sugar" -> "Brown Sugar", for ingredients with no row in the table. */
+/** "brown_sugar" -> "Brown Sugar", used when an ingredient has no row. */
 function humanise(id: string): string {
   return id
     .split(/[_-]/)
@@ -38,10 +37,8 @@ function humanise(id: string): string {
 }
 
 /**
- * Joins a recipe's ingredient references against the ingredients table and works
- * out what each line item contributes. Unknown ids do not throw: they come back
- * flagged `missing` with null nutrition, because a recipe with an incomplete
- * ingredient table is still a recipe worth showing.
+ * Joins ingredient references against the table. Unknown ids do not throw: they
+ * come back flagged `missing` with null nutrition. data.json has 8 such ids.
  */
 function resolveIngredients(recipe: RawRecipe, store: Store): ResolvedIngredient[] {
   return recipe.ingredients.map((line) => {
@@ -62,29 +59,25 @@ function resolveIngredients(recipe: RawRecipe, store: Store): ResolvedIngredient
 }
 
 /**
- * Which dietary claims a recipe can make.
- *
- * Derived claims are the intersection across ingredients - one non-vegan
- * ingredient makes the whole recipe non-vegan. That logic is only sound when we
- * know every ingredient, so when any row is missing we fall back to trusting the
- * recipe's own tags rather than inferring "vegan" from an incomplete list.
+ * Dietary claims are the intersection across ingredients, which is only sound
+ * when every ingredient resolves. With a missing row we fall back to the recipe's
+ * own tags, so an incomplete list can never produce a false "vegan".
  */
 function deriveDietary(recipe: RawRecipe, ingredients: ResolvedIngredient[]): string[] {
-  const authored = recipe.tags.filter((tag) => DIETARY_TERMS.includes(tag));
-  const claims = new Set(authored);
+  const claims = new Set(recipe.tags.filter((tag) => DIETARY_TERMS.includes(tag)));
 
-  const complete = ingredients.length > 0 && ingredients.every((i) => !i.missing);
-  if (complete) {
+  if (ingredients.length > 0 && ingredients.every((i) => !i.missing)) {
     for (const term of DIETARY_TERMS) {
       if (ingredients.every((i) => i.dietary.includes(term))) claims.add(term);
     }
   }
 
-  // Anything vegan is also vegetarian; the data only ever tags the stricter one.
+  // The data only ever tags the stricter term.
   if (claims.has('vegan')) claims.add('vegetarian');
   return [...claims];
 }
 
+/** Takes resolved ingredients so callers perform the join once. */
 function toSummary(recipe: RawRecipe, ingredients: ResolvedIngredient[]): RecipeSummary {
   const nutrition = summariseNutrition(ingredients, recipe.servings);
 
@@ -109,7 +102,6 @@ function toSummary(recipe: RawRecipe, ingredients: ResolvedIngredient[]): Recipe
 }
 
 function toDetail(recipe: RawRecipe, store: Store): RecipeDetail {
-  // Resolve once and reuse. The join is the expensive part of building a recipe.
   const ingredients = resolveIngredients(recipe, store);
   return {
     ...toSummary(recipe, ingredients),
@@ -119,23 +111,19 @@ function toDetail(recipe: RawRecipe, store: Store): RecipeDetail {
   };
 }
 
-/**
- * Free-text search across the fields a cook would actually type: the name, the
- * blurb, the tags, and the ingredients (both display name and id, so "brown_sugar"
- * and "brown sugar" both hit).
- */
+/** Every word must match, across title, description, tags and ingredients. */
 function matchesSearch(recipe: RawRecipe, summary: RecipeSummary, term: string): boolean {
   const haystack = [
     summary.title,
     summary.description,
     ...summary.tags,
     ...summary.ingredientNames,
+    // Underscores stripped so "brown sugar" matches the id `brown_sugar`.
     ...recipe.ingredients.map((i) => i.ingredientId.replace(/_/g, ' ')),
   ]
     .join(' ')
     .toLowerCase();
 
-  // Every word must appear somewhere, so "chicken rice" narrows rather than widens.
   return term
     .toLowerCase()
     .split(/\s+/)
@@ -167,15 +155,15 @@ function comparator(query: RecipeQuery): (a: RecipeSummary, b: RecipeSummary) =>
       default:
         result = a.title.localeCompare(b.title);
     }
-    // Title is the tiebreaker so equal values (lots of "easy" recipes) stay stable.
+    // Title breaks ties so equal values keep a stable order.
     return (result || a.title.localeCompare(b.title)) * direction;
   };
 }
 
 /**
- * Filtering runs on the server so the client never has to hold the full dataset.
- * With 15 recipes that is overkill today; with 15,000 it is the difference between
- * a query and a download, and the API shape would not have to change.
+ * Filters and sorts server-side, so the client never holds the full dataset.
+ * Facets are AND (each choice narrows) except difficulty, which is OR because a
+ * recipe only has one.
  */
 export async function listRecipes(query: RecipeQuery): Promise<RecipeListResult> {
   const store = await load();
@@ -183,26 +171,22 @@ export async function listRecipes(query: RecipeQuery): Promise<RecipeListResult>
 
   const results: RecipeSummary[] = [];
   let withheld = 0;
+
   for (const recipe of store.recipes) {
     const summary = toSummary(recipe, resolveIngredients(recipe, store));
     const ingredientIds = new Set(recipe.ingredients.map((i) => i.ingredientId));
 
     if (query.search && !matchesSearch(recipe, summary, query.search)) continue;
-    // Multi-select filters are AND within a facet: each extra choice narrows.
     if (!query.tags.every((tag) => summary.tags.includes(tag))) continue;
     if (!query.ingredients.every((id) => ingredientIds.has(id))) continue;
     if (!query.dietary.every((term) => summary.dietary.includes(term))) continue;
-    // ...except difficulty, where picking two means "either is fine".
     if (query.difficulty.length && !query.difficulty.includes(summary.difficulty)) continue;
     if (query.maxTotalTime !== undefined && summary.totalTimeMinutes > query.maxTotalTime) continue;
 
     if (filteringAllergens) {
       if (query.excludeAllergens.some((a) => summary.allergens.includes(a))) continue;
-      // An allergen filter is the one place a gap in the data can do harm. A
-      // recipe with an unknown ingredient may well contain the allergen and
-      // simply not be able to say so - Chicken Stir-Fry reports no allergens
-      // because `soy_sauce` has no row. Withhold it rather than imply it is safe,
-      // and report the count so the UI can explain the absence.
+      // A recipe with an unknown ingredient may contain the allergen without
+      // being able to declare it, so it is withheld rather than implied safe.
       if (summary.unknownIngredients.length > 0) {
         withheld += 1;
         continue;
@@ -221,13 +205,7 @@ export async function getRecipe(id: string): Promise<RecipeDetail | null> {
   return recipe ? toDetail(recipe, store) : null;
 }
 
-/**
- * Adds a recipe and returns it in the same shape as GET /api/recipes/:id, so the
- * client can navigate straight to it without a second request.
- *
- * The server owns `id` and `dateAdded`. Ids are numeric strings in the fixture,
- * so we continue the sequence rather than inventing a different format.
- */
+/** Continues the fixture's numeric id sequence. In-memory only — see db.insertRecipe. */
 export async function createRecipe(input: NewRecipeInput): Promise<RecipeDetail> {
   const store = await load();
 
@@ -245,7 +223,7 @@ export async function createRecipe(input: NewRecipeInput): Promise<RecipeDetail>
     prepTime: `${input.prepTimeMinutes} minutes`,
     cookTime: `${input.cookTimeMinutes} minutes`,
     difficulty: input.difficulty,
-    ingredients: input.ingredients as RawRecipeIngredient[],
+    ingredients: input.ingredients,
     instructions: input.instructions,
     tags: input.tags,
     dateAdded: new Date().toISOString(),
@@ -255,11 +233,10 @@ export async function createRecipe(input: NewRecipeInput): Promise<RecipeDetail>
   return toDetail(recipe, store);
 }
 
-/** Filter options built from the data itself, so the UI never hardcodes a list. */
+/** Filter options built from the data, so the UI never hardcodes a list. */
 export async function getFacets(): Promise<Facets> {
   const store = await load();
   const summaries = store.recipes.map((r) => toSummary(r, resolveIngredients(r, store)));
-
   const sorted = (values: string[]): string[] => [...new Set(values)].sort();
 
   return {

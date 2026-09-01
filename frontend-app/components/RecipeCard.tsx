@@ -3,9 +3,8 @@ import type { RecipeSummary } from '@/lib/types';
 
 /** Pure presentation, so it stays a server component and ships no JS. */
 export function RecipeCard({ recipe }: { recipe: RecipeSummary }) {
-  // An incomplete figure must not read as a real one. Chocolate Chip Cookies is
-  // missing butter and both sugars, so its 158 kcal would otherwise rank it as
-  // one of the lightest recipes here.
+  // Marked so an incomplete total is not read as comparable when sorting by
+  // calories: Chocolate Chip Cookies is missing butter and both sugars.
   const estimated = !recipe.nutritionComplete;
 
   return (
@@ -25,7 +24,7 @@ export function RecipeCard({ recipe }: { recipe: RecipeSummary }) {
         <span>{recipe.totalTimeMinutes} min total</span>
         <span>{recipe.difficulty}</span>
         <span>{recipe.servings} servings</span>
-        {/* 0 means nothing could be calculated, so show nothing rather than "0 kcal". */}
+        {/* 0 means nothing was calculable, so show nothing rather than "0 kcal". */}
         {recipe.caloriesPerServing > 0 && (
           <span
             className={estimated ? 'partial' : undefined}
