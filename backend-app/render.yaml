@@ -1,10 +1,11 @@
 # Render blueprint for the API. Point Render at this repo and it reads this file.
-# Root Directory must be set to `backend-app` in the Render dashboard.
 services:
   - type: web
     name: recipe-api
     runtime: node
     plan: free
+    # Without this, npm runs at the repo root, which has no package.json.
+    rootDir: backend-app
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
